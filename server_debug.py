@@ -8,7 +8,7 @@ import sys
 import threading
 import queue
 
-# 创建一个全局队列用于线程间通信
+# 创建全局队列用于线程间通信
 command_queue = queue.Queue()
 move_flag = 0  # 全局移动标志
 
@@ -24,63 +24,66 @@ def handle_exit(signum, frame):
     sys.exit(0)
 
 def worker_thread():
+    """模拟机械臂动作的工作线程"""
     global move_flag
-    move_flag = 0
     print("调试模式：工作线程启动")
     
     while True:
         try:
-            # 从队列中获取命令
             if not command_queue.empty():
                 command = command_queue.get()
+                print(f"收到命令: {command}")
                 
-                # 根据命令执行不同的操作
+                # 模拟不同动作的执行
                 if command == "0":
                     move_flag = 1
-                    print("执行动作0: 模拟机械臂上下运动")
-                    # 模拟机械臂动作时间
-                    time.sleep(1.0)
-                    print("- 恢复初始位置")
-                    time.sleep(1.0)
-                    print("- 执行上下运动")
-                    time.sleep(1.0)
-                    print("- 返回初始位置")
-                    time.sleep(1.0)
+                    print("执行动作0: 点头动作")
+                    time.sleep(2)
                     move_flag = 0
-                    
                 elif command == "1":
                     move_flag = 1
-                    print("执行动作1: 模拟机械臂夹取动作")
-                    time.sleep(0.5)
-                    print("- 夹紧")
-                    time.sleep(0.5)
-                    print("- 松开")
+                    print("执行动作1: 夹取动作")
+                    time.sleep(2)
+                    move_flag = 0
+                elif command == "2":
+                    move_flag = 1
+                    print("执行动作2: 摇摆动作")
+                    time.sleep(2)
+                    move_flag = 0
+                elif command == "3":
+                    move_flag = 1
+                    print("执行动作3: 转向动作")
+                    time.sleep(2)
+                    move_flag = 0
+                elif command == "4":
+                    move_flag = 1
+                    print("执行动作4: 组合动作")
+                    time.sleep(2)
                     move_flag = 0
 
             time.sleep(0.1)  # 防止CPU占用过高
-
         except Exception as e:
             print(f"工作线程错误: {e}")
 
 def send_frame(client_socket, frame, max_retries=3):
     # 调整图像大小为256x256
-    frame = cv2.resize(frame, (256, 256))
+    frame = cv2.resize(frame, (320, 320))
 
-    # 压缩图像以减少数据大小
+    # 压缩图像
     encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
     _, encoded_frame = cv2.imencode('.jpg', frame, encode_param)
     data = pickle.dumps(encoded_frame)
 
-    # 确保数据长度不超过预定义的最大值
-    MAX_MESSAGE_SIZE = 256 * 256  # 1MB
-    if len(data) > MAX_MESSAGE_SIZE:
-        raise ValueError(f"数据大小 ({len(data)} bytes) 超过最大限制 ({MAX_MESSAGE_SIZE} bytes)")
-
     try:
+        # 发送移动状态
+        state_move = struct.pack("!Q", move_flag)
+        client_socket.sendall(state_move)
+        
+        # 发送图像数据
         message_size = struct.pack("!Q", len(data))
         client_socket.sendall(message_size)
 
-        chunk_size = 1024
+        chunk_size = 4096
         for i in range(0, len(data), chunk_size):
             chunk = data[i:i + chunk_size]
             client_socket.sendall(chunk)
@@ -117,7 +120,9 @@ def send_video_stream(server_ip, server_port, retry_delay=5):
                 if not cap.isOpened():
                     raise Exception("无法打开摄像头")
 
-                params = pickle.dumps((256, 256))
+                cap.set(cv2.CAP_PROP_FPS, 30)
+
+                params = pickle.dumps((320, 320))
                 param_size = struct.pack("!Q", len(params))
                 client_socket.sendall(param_size)
                 client_socket.sendall(params)

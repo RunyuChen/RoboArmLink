@@ -56,7 +56,7 @@ class VideoThread(QThread):
             remaining = message_size
             
             while remaining > 0:
-                chunk = self.client_socket.recv(min(remaining, 1024))
+                chunk = self.client_socket.recv(min(remaining, 4096))
                 if not chunk:
                     return None
                 data += chunk
@@ -71,8 +71,6 @@ class VideoThread(QThread):
     def receive_status(self):
         try:
             status_size = struct.unpack("!Q", self.client_socket.recv(8))[0]
-            # print(status_size)
-            # status = self.client_socket.recv(status_size).decode()
             return str(status_size)
         except Exception as e:
             print(f"接收状态错误: {e}")
@@ -99,7 +97,6 @@ class VideoThread(QThread):
             if frame is not None:
                 self.frame_ready.emit(frame)
 
-
     def stop(self):
         self.running = False
         if self.client_socket:
@@ -113,13 +110,14 @@ class RobotControlUI(QMainWindow):
 
         # 加载YOLOv5模型
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(current_dir, "best.pt")
+        model_path = os.path.join(current_dir, "best_new.pt")
         self.model = attempt_load(model_path, device='cpu')
-        self.model.conf = 0.5  # 设置置信度阈值
+        self.model.conf = 0.01  # 设置置信度阈值
         
         # 初始化计数器
         self.frame_count = 0
         self.label_counts = {}
+        self.label_sends = {}
         self.detecting = False
 
         # 创建主窗口部件和布局
@@ -143,9 +141,11 @@ class RobotControlUI(QMainWindow):
         self.action2_button = QPushButton("动作2")
         self.action3_button = QPushButton("动作3")
         self.action4_button = QPushButton("动作4")
+        self.action5_button = QPushButton("动作5")
         self.connect_button = QPushButton("连接服务器")
+        self.pause_button = QPushButton("暂停")  # Changed from interrupt_button to pause_button
         
-        buttons = [self.action0_button, self.action1_button, self.action2_button, self.action3_button, self.action4_button, self.connect_button]
+        buttons = [self.action0_button, self.action1_button, self.action2_button, self.action3_button, self.action4_button, self.action5_button, self.connect_button]
         for button in buttons:
             button.setFont(QFont("Arial", 12))
             button.setStyleSheet("background-color: #4CAF50; color: white; border: none; padding: 10px;")
@@ -179,12 +179,14 @@ class RobotControlUI(QMainWindow):
         self.action2_button.clicked.connect(lambda: self.send_button_command("2"))
         self.action3_button.clicked.connect(lambda: self.send_button_command("3"))
         self.action4_button.clicked.connect(lambda: self.send_button_command("4"))
+        self.action5_button.clicked.connect(lambda: self.send_button_command("5"))
         self.connect_button.clicked.connect(self.connect_to_server)
-        self.detect_button.clicked.connect(self.toggle_detection)
+        self.pause_button.clicked.connect(self.toggle_pause)  # Connect to toggle_pause
+        self.detect_button.clicked.connect(self.start_detection)
 
         # 初始化视频线程
         self.video_thread = None
-        self.SERVER_IP = "192.168.136.209"  # 修改为你的服务器IP
+        self.SERVER_IP = "192.168.136.164"  # 修改为你的服务器IP
         self.SERVER_PORT = 11113  # 修改为你的服务器端口
 
     def process_frame(self, frame):
@@ -206,19 +208,18 @@ class RobotControlUI(QMainWindow):
                 for *xyxy, conf, cls in det:
                     # 记录检测到的标签
                     label_id = int(cls)
-                    temp = label_id
                     self.label_counts[label_id] = self.label_counts.get(label_id, 0) + 1
-                    
-                    if self.frame_count % 1 == 0:
+                    self.label_sends[label_id] = self.label_sends.get(label_id, 0) + 1
+                    if self.frame_count % 20 == 0:
                         # 在图像上绘制检测框和标签
                         if self.label_counts:
                             most_common_label = max(self.label_counts, key=self.label_counts.get)
+                        temp = most_common_label
                         annotator = Annotator(frame, line_width=2, example=str(self.model.names))
-                        label = f'{self.model.names[most_common_label]} {conf:.2f}'
-                        annotator.box_label(xyxy, label, color=(255, 0, 0))
+                        # label = f'{self.model.names[most_common_label]} {conf:.2f}'
+                        annotator.box_label(xyxy, color=(255, 0, 0))
                         frame = annotator.result()
                         self.label_counts.clear()
-
 
         return frame, temp
 
@@ -248,6 +249,33 @@ class RobotControlUI(QMainWindow):
         if self.video_thread and self.video_thread.isRunning():
             self.video_thread.send_command(command)
 
+    def start_detection(self):
+        self.detecting = True
+        self.detect_button.setEnabled(False)
+        self.detect_button.setText("检测中")
+        QTimer.singleShot(1000, self.stop_detection)  # Stop detection after 1 seconds
+
+    def stop_detection(self):
+        print("label_sends:", self.label_sends)
+        if self.video_thread and self.video_thread.isRunning():
+            if self.label_sends:
+                label_send = max(self.label_sends, key=self.label_sends.get)
+                
+                # Mapping function for label_send
+                label_mapping = {9: 0, 5: 1, 3: 2, 7: 3, 6: 4, 4: 5}
+                remapped_label_send = label_mapping.get(label_send, 6)  # Default to 6 for others
+                
+                self.video_thread.send_command(str(remapped_label_send))
+                if label_send in [9,5,3,7,6,4]:
+                    label_name = f'{self.model.names[label_send]}' 
+                else:
+                    label_name = 'Others' # Handle unknown labels
+                self.status_label.setText(f"发送检测结果: {label_name}")
+                self.label_sends.clear()
+        self.detecting = False
+        self.detect_button.setEnabled(True)
+        self.detect_button.setText("开始检测")
+
     def update_frame(self, frame):
         """更新帧并进行手势识别"""
         global move_status
@@ -256,10 +284,8 @@ class RobotControlUI(QMainWindow):
             processed_frame, gesture_class = self.process_frame(frame)
             # 如果检测到有效的手势，发送对应的命令
             if gesture_class >= 0 and self.video_thread and self.video_thread.isRunning():
-                self.send_detection_command(str(gesture_class))
-                print(f"检测到手势: {gesture_class}")
-                self.status_label.setText(f"检测结果: {gesture_class}")
-
+                print(f"检测到帧手势: {gesture_class}")
+                # self.status_label.setText(f"检测结果: {gesture_class}")
             # 显示处理后的帧
             height, width, channel = processed_frame.shape
             bytes_per_line = 3 * width
@@ -276,6 +302,14 @@ class RobotControlUI(QMainWindow):
             self.video_label.setPixmap(QPixmap.fromImage(q_image).scaled(
                 self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
+    def toggle_pause(self):
+        if self.pause_button.text() == "暂停":
+            self.pause_button.setText("恢复")
+            self.send_button_command("s")  # Send pause command
+        else:
+            self.pause_button.setText("暂停")
+            self.send_button_command("r")  # Send resume command
+
     def toggle_detection(self):
         self.detecting = not self.detecting
         if self.detecting:
@@ -291,6 +325,7 @@ class RobotControlUI(QMainWindow):
         self.action2_button.setEnabled(enabled)
         self.action3_button.setEnabled(enabled)
         self.action4_button.setEnabled(enabled)
+        self.action5_button.setEnabled(enabled)
 
     def update_status(self, status):
         if status == "0":
