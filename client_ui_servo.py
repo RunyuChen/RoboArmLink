@@ -25,6 +25,7 @@ move_status = 0
 class VideoThread(QThread):
     frame_ready = pyqtSignal(object)
     status_update = pyqtSignal(str)
+    servo_update = pyqtSignal(list)
     
     def __init__(self, server_ip, server_port):
         super().__init__()
@@ -70,11 +71,25 @@ class VideoThread(QThread):
 
     def receive_status(self):
         try:
-            status_size = struct.unpack("!Q", self.client_socket.recv(8))[0]
-            return str(status_size)
+            try:
+                status_size = struct.unpack("!h", self.client_socket.recv(2))[0]
+                # print(status_size)
+            except:
+                status_size = -1
+            # 接收舵机状态
+            servo_status_size = []
+            for i in range(6):
+                data = -1  # Default value
+                # try:
+                #     data = struct.unpack("!h", self.client_socket.recv(2))[0]
+                # except:
+                #     print(f"Unpacking error for servo {i}, using default value: {data}")
+                servo_status_size.append(data)  # Receive a list of 6 servo statuses
+            # print(servo_status_size)
+            return str(status_size), servo_status_size # Return status and servo status as a list
         except Exception as e:
             print(f"接收状态错误: {e}")
-            return None
+            return None, None
 
     def send_command(self, command):
         try:
@@ -89,10 +104,12 @@ class VideoThread(QThread):
             return
 
         while self.running:
-            status = self.receive_status()
+            status, servo_status = self.receive_status()
             if status is not None:
                 self.status_update.emit(status)
                 move_status = status
+                # 这里可以处理舵机状态
+                self.servo_update.emit(servo_status)
             frame = self.receive_frame()
             if frame is not None:
                 self.frame_ready.emit(frame)
@@ -112,7 +129,7 @@ class RobotControlUI(QMainWindow):
         current_dir = os.path.dirname(os.path.abspath(__file__))
         model_path = os.path.join(current_dir, "best.pt")
         self.model = attempt_load(model_path, device='cpu')
-        self.model.conf = 0.01  # 设置置信度阈值
+        self.model.conf = 0.2  # 设置置信度阈值
         
         # 初始化计数器
         self.frame_count = 0
@@ -159,9 +176,10 @@ class RobotControlUI(QMainWindow):
         # 创建状态栏标签
         self.status_label = QLabel("检测结果: 无")
         self.arm_status_label = QLabel("机械臂状态: 未知")
+        self.servo_status_labels = [QLabel("舵机状态: 未知") for _ in range(6)]  # Create labels for six servos
         self.detect_button = QPushButton("开始检测")
         
-        labels = [self.status_label, self.arm_status_label]
+        labels = [self.status_label, self.arm_status_label] + self.servo_status_labels  # Include servo status labels
         for label in labels:
             label.setFont(QFont("Arial", 12))
             label.setStyleSheet("color: blue;")
@@ -186,8 +204,11 @@ class RobotControlUI(QMainWindow):
 
         # 初始化视频线程
         self.video_thread = None
-        self.SERVER_IP = "192.168.1.11"  # 修改为你的服务器IP
-        self.SERVER_PORT = 11111  # 修改为你的服务器端口
+        # self.SERVER_IP = "192.168.136.164"  # 修改为你的服务器IP
+        # self.SERVER_PORT = 11113  # 修改为你的服务器端口
+
+        self.SERVER_IP = "192.168.1.11"
+        self.SERVER_PORT = 11111
 
     def process_frame(self, frame):
         """使用YOLOv5模型进行手势识别并渲染结果"""
@@ -228,6 +249,7 @@ class RobotControlUI(QMainWindow):
             self.video_thread = VideoThread(self.SERVER_IP, self.SERVER_PORT)
             self.video_thread.frame_ready.connect(self.update_frame)
             self.video_thread.status_update.connect(self.update_status)
+            self.video_thread.servo_update.connect(self.update_servo)
             self.video_thread.start()
             self.connect_button.setText("断开连接")
             self.detect_button.setEnabled(True)  # Enable detection button after connecting
@@ -238,6 +260,8 @@ class RobotControlUI(QMainWindow):
             self.video_label.clear()
             self.detect_button.setEnabled(False)  # Disable detection button after disconnecting
             self.arm_status_label.setText("机械臂状态: 未知")
+            for label in self.servo_status_labels:
+                label.setText("舵机状态: 未知")  # Reset all servo status labels
 
     def send_button_command(self, command):
         if self.video_thread and self.video_thread.isRunning():
@@ -334,6 +358,12 @@ class RobotControlUI(QMainWindow):
             self.arm_status_label.setText("机械臂状态: 运动")
         else:
             self.arm_status_label.setText(f"机械臂状态: {status}")
+
+    def update_servo(self, servo_state):
+        # Update servo status labels
+        for i in range(len(servo_state)):  # Update all servo statuses
+            self.servo_status_labels[i].setText(f"舵机状态 {i+1}: {servo_state[i]}")  # Update each servo status
+
 
     def closeEvent(self, event):
         if self.video_thread:

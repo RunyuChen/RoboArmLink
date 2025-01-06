@@ -22,7 +22,7 @@ class DebugRobotControlUI(RobotControlUI):
         
         # 加载YOLOv5模型
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(current_dir, "best_new.pt")
+        model_path = os.path.join(current_dir, "best.pt")
         self.model = attempt_load(model_path, device='cpu')
         self.model.conf = 0.2  # 设置置信度阈值
         

@@ -37,7 +37,6 @@ def worker_thread():
             if not command_queue.empty():
                 command = command_queue.get()
                 # 在这里处理命令或执行其他任务
-
                 # 根据命令执行不同的操作
                 if command == "0":
                     move_flag = 1
@@ -69,6 +68,12 @@ def worker_thread():
                     command = "-1"
                     move_flag = 0
                     pass
+                elif command == "5":
+                    move_flag = 1
+                    move_servo.bow()
+                    command = "-1"
+                    move_flag = 0
+                    pass
 
             time.sleep(0.1)  # 防止CPU占用过高
 
@@ -78,25 +83,30 @@ def worker_thread():
 
 def send_frame(client_socket, frame, max_retries=3):
     # 调整图像大小为640x640
-    frame = cv2.resize(frame, (256, 256))
+    frame = cv2.resize(frame, (320, 320))
 
     # 压缩图像以减少数据大小
-    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 60]
     _, encoded_frame = cv2.imencode('.jpg', frame, encode_param)
     data = pickle.dumps(encoded_frame)
 
-    # 确保数据长度不超过预定义的最大值
-    MAX_MESSAGE_SIZE = 256 * 256  # 1MB
-    if len(data) > MAX_MESSAGE_SIZE:
-        raise ValueError(f"数据大小 ({len(data)} bytes) 超过最大限制 ({MAX_MESSAGE_SIZE} bytes)")
+    #     # 确保数据长度不超过预定义的最大值
+    #     MAX_MESSAGE_SIZE = 256 * 256  # 1MB
+    #     if len(data) > MAX_MESSAGE_SIZE:
+    #         raise ValueError(f"数据大小 ({len(data)} bytes) 超过最大限制 ({MAX_MESSAGE_SIZE} bytes)")
 
     try:
         state_move = struct.pack("!Q", move_flag)
         client_socket.sendall(state_move)
+        ##################################################
+        for id in range(1, 7):
+            servo_data = struct.pack("!Q", move_servo.read_angle(id))
+            client_socket.sendall(servo_data)
+        ####################################################
         message_size = struct.pack("!Q", len(data))
         client_socket.sendall(message_size)
 
-        chunk_size = 1024
+        chunk_size = 4096
         for i in range(0, len(data), chunk_size):
             chunk = data[i:i + chunk_size]
             client_socket.sendall(chunk)
@@ -109,7 +119,7 @@ def send_frame(client_socket, frame, max_retries=3):
 
 
 def send_video_stream(server_ip, server_port, retry_delay=5):
-    global server_socket, client_socket, cap
+    global server_socket, client_socket, cap, move_flag
 
     # 启动工作线程
     worker = threading.Thread(target=worker_thread, daemon=True)
@@ -117,6 +127,7 @@ def send_video_stream(server_ip, server_port, retry_delay=5):
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
     try:
         server_socket.bind((server_ip, server_port))
         server_socket.listen(2)
@@ -135,7 +146,7 @@ def send_video_stream(server_ip, server_port, retry_delay=5):
 
                 cap.set(cv2.CAP_PROP_FPS, 30)
 
-                params = pickle.dumps((256, 256))
+                params = pickle.dumps((320, 320))
                 param_size = struct.pack("!Q", len(params))
                 client_socket.sendall(param_size)
                 client_socket.sendall(params)
@@ -143,10 +154,11 @@ def send_video_stream(server_ip, server_port, retry_delay=5):
                 while True:
                     try:
                         client_socket.settimeout(0.001)
-                        flag = client_socket.recv(1024)
+                        flag = client_socket.recv(1024).decode()
+                        print(flag)
                         if flag and not move_flag:
                             # 将收到的标志放入队列，供工作线程处理
-                            command_queue.put(flag.decode())
+                            command_queue.put(flag)
                             # print(f"收到客户端标志: {flag.decode()}")
                     except socket.timeout:
                         pass
@@ -161,7 +173,7 @@ def send_video_stream(server_ip, server_port, retry_delay=5):
                     if not send_frame(client_socket, frame):
                         break
 
-                    time.sleep(1 / 15)  # 30 FPS
+                    time.sleep(1 / 20)  # 30 FPS
 
             except socket.timeout:
                 print("连接超时")
