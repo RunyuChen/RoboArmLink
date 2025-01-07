@@ -28,7 +28,7 @@ pip install PyQt5 opencv-python torch
 
 ```python
 SERVER_IP = "0.0.0.0"  # 监听所有网络接口
-SERVER_PORT = 8000     # 设置端口号
+SERVER_PORT = 8000     # 设置端口号，端口号可为任意端口
 ```
 
 2. 运行服务器：
@@ -78,7 +78,7 @@ python client.py
 ## 注意事项
 
 1. **网络连接**：
-   - 确保服务器和客户端在同一局域网内
+   - 确保服务器和客户端在同一局域网内，第一次连接建议机械臂和个人PC连接手机热点，并在手机上查看机械臂的IP
    - 检查防火墙设置，确保端口通信正常
    - 可以使用 `ipconfig`（Windows）或 `ifconfig`（Linux/Mac） 查看IP地址
 
