@@ -1,39 +1,3 @@
-import cv2
-import socket
-import struct
-import pickle
-import time
-import signal
-import sys
-import threading
-import queue
-import move_servo
-
-# 创建一个全局队列用于线程间通信
-command_queue = queue.Queue()
-
-
-def handle_exit(signum, frame):
-    print("\n正在清理资源并退出...")
-    if 'cap' in globals():
-        cap.release()
-    if 'server_socket' in globals():
-        server_socket.close()
-    if 'client_socket' in globals():
-        client_socket.close()
-    cv2.destroyAllWindows()
-    sys.exit(0)
-
-
-def worker_thread():
-    global move_flag
-
-    move_flag = 0
-
-    print("工作线程启动")
-    while True:
-        try:
-            # 从队列中获取命令import cv2
 import socket
 import struct
 import pickle
